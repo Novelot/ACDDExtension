@@ -1,0 +1,2218 @@
+From 10f090cbfb98248b2cb29c6b2a576329f8d25158 Mon Sep 17 00:00:00 2001
+From: HiGooogle <HiGooogle@google.com>
+Date: Sat, 19 Dec 2015 16:36:17 +0800
+Subject: [PATCH] 6.0.1 aapt
+
+---
+ include/androidfw/AttributeFinder.h         |  17 +-
+ include/androidfw/acdd/ACDDAaptConfig.h     |  61 ++++++
+ include/androidfw/acdd/ACDDResource.h       | 151 +++++++++++++
+ include/androidfw/acdd/ACDDResourceBridge.h |  38 ++++
+ libs/androidfw/Android.mk                   |   7 +-
+ libs/androidfw/ResourceTypes.cpp            |  38 +++-
+ libs/androidfw/acdd/ACDDAaptConfig.cpp      |  62 ++++++
+ libs/androidfw/acdd/ACDDResource.cpp        | 317 ++++++++++++++++++++++++++++
+ libs/androidfw/acdd/ACDDResourceBridge.cpp  | 159 ++++++++++++++
+ tools/aapt/Android.mk                       |   5 +-
+ tools/aapt/Main.cpp                         |  39 +++-
+ tools/aapt/Main.h                           |   7 +-
+ tools/aapt/Resource.cpp                     |  31 +--
+ tools/aapt/ResourceTable.cpp                | 120 ++++++-----
+ tools/aapt/ResourceTable.h                  |  46 ++--
+ tools/aapt/XMLNode.cpp                      |  56 +++++
+ tools/aapt/XMLNode.h                        |  39 ++--
+ tools/aapt/acdd/ACDDResourceImpl.cpp        |  38 ++++
+ tools/aapt/acdd/ACDDResourceImpl.h          |  24 +++
+ 19 files changed, 1137 insertions(+), 118 deletions(-)
+ create mode 100755 include/androidfw/acdd/ACDDAaptConfig.h
+ create mode 100755 include/androidfw/acdd/ACDDResource.h
+ create mode 100755 include/androidfw/acdd/ACDDResourceBridge.h
+ create mode 100755 libs/androidfw/acdd/ACDDAaptConfig.cpp
+ create mode 100755 libs/androidfw/acdd/ACDDResource.cpp
+ create mode 100755 libs/androidfw/acdd/ACDDResourceBridge.cpp
+ create mode 100755 tools/aapt/acdd/ACDDResourceImpl.cpp
+ create mode 100755 tools/aapt/acdd/ACDDResourceImpl.h
+
+diff --git a/include/androidfw/AttributeFinder.h b/include/androidfw/AttributeFinder.h
+index acf7056..1e23f09 100644
+--- a/include/androidfw/AttributeFinder.h
++++ b/include/androidfw/AttributeFinder.h
+@@ -19,7 +19,9 @@
+
+ #include <stdint.h>
+ #include <utils/KeyedVector.h>
+-
++#ifdef ACDD
++#include <acdd/ACDDAaptConfig.h>
++#endif
+ namespace android {
+
+ static inline uint32_t getPackage(uint32_t attr) {
+@@ -99,9 +101,15 @@ void BackTrackingAttributeFinder<Derived, Iterator>::jumpToClosestAttribute(cons
+         case 0x01:
+             mCurrent = mFrameworkStart;
+             break;
++#ifdef  ACDD
++        case  ACDDAaptConfig::getInstance()->getPackageGroupId():
++           mCurrent = mAppStart;
++            break;
++#else
+         case 0x7f:
+             mCurrent = mAppStart;
+             break;
++#endif
+         default: {
+             ssize_t idx = mPackageOffsets.indexOfKey(packageId);
+             if (idx >= 0) {
+@@ -132,9 +140,16 @@ void BackTrackingAttributeFinder<Derived, Iterator>::markCurrentPackageId(const
+         case 0x01:
+             mFrameworkStart = mCurrent;
+             break;
++#ifdef ACDD
++
++        case  ACDDAaptConfig::getInstance()->getPackageGroupId():
++            mAppStart = mCurrent;
++            break;
++#else
+         case 0x7f:
+             mAppStart = mCurrent;
+             break;
++#endif
+         default:
+             mPackageOffsets.add(packageId, mCurrent);
+             break;
+diff --git a/include/androidfw/acdd/ACDDAaptConfig.h b/include/androidfw/acdd/ACDDAaptConfig.h
+new file mode 100755
+index 0000000..630e6a7
+--- /dev/null
++++ b/include/androidfw/acdd/ACDDAaptConfig.h
+@@ -0,0 +1,61 @@
++#ifndef __ACDD__AaptConfig_h
++#define __ACDD__AaptConfig_h
++
++#include <stdio.h>
++#include <iostream>
++#include <string>
++#include <sstream>
++#include <fstream>
++#include <stdlib.h>
++#include <map>
++
++using namespace std;
++
++#define ACDD_AAPT_CONFIG_SHARED_RESOURCES_SYMBOL "shared-resources-symbol"//prebuild Shared  Package Resouces
++#define ACDD_AAPT_CONFIG_PKG_GROUP_ID "pkgGroupId"// plugin package group id
++#define ACDD_AAPT_CONFIG_PKG_VERSION_NAME "versionName"
++#define ACDD_AAPT_CONFIG_TYPE_PACKAGE_GROUP_ID 1
++#define ACDD_AAPT_CONFIG_TYPE_SHARED_RESOURCE_TABLE 2
++class ACDDAaptConfig
++{
++
++        size_t packageGroupId;
++        std::string mSharedResourcePackageName;
++        std::string mSharedResourcePath;
++        std::string versionName;
++        bool updateVersion;
++public:
++        static ACDDAaptConfig* getInstance()
++        {
++                static ACDDAaptConfig instance;
++                return &instance;
++        }
++        bool  initACDDConig(std::string config,int configType);
++        size_t getPackageGroupId();
++        std::string  getSharedResourcePackageName();
++        std::string  getSharedResourcePath();
++        std::string  getVersionName();
++        bool  isUpdateVersion();
++        int getSharedResource(std::string type,std::string name);
++protected:
++        struct Object_Creator
++        {
++                Object_Creator()
++                {
++                        ACDDAaptConfig::getInstance();
++                }
++        };
++        static Object_Creator _object_creator;
++        std::string _conFilePath;
++
++        std::map<std::string, std::string> options;
++        bool read_file(std::istream& is);
++        ACDDAaptConfig() {
++                updateVersion=false;
++                packageGroupId=0x7f;
++        }
++        ~ACDDAaptConfig() {
++        }
++};
++
++#endif
+diff --git a/include/androidfw/acdd/ACDDResource.h b/include/androidfw/acdd/ACDDResource.h
+new file mode 100755
+index 0000000..74b73dc
+--- /dev/null
++++ b/include/androidfw/acdd/ACDDResource.h
+@@ -0,0 +1,151 @@
++#ifndef __AaptExt__ACDDResource__
++#define __AaptExt__ACDDResource__
++#include <stdio.h>
++#include <string>
++#include <iostream>
++#include <map>
++using namespace std;
++class ACDDResource {
++        map<std::string,int> animMaps;
++        map<std::string,int> animatorMaps;
++        map<std::string,int> arrayMaps;
++        map<std::string,int> attrMaps;
++        map<std::string,int> boolMaps;
++        map<std::string,int> colorMaps;
++        map<std::string,int> dimenMaps;
++        map<std::string,int> drawableMaps;
++        map<std::string,int> fractionMaps;
++        map<std::string,int> idMaps;
++        map<std::string,int> integerMaps;
++        map<std::string,int> interpolatorMaps;
++        map<std::string,int> layoutMaps;
++        map<std::string,int> menuMaps;
++        map<std::string,int> mipmapMaps;
++        map<std::string,int> pluralsMaps;
++        map<std::string,int> rawMaps;
++        map<std::string,int> stringMaps;
++        map<std::string,int> styleMaps;
++        map<std::string,int> transitionMaps;
++        map<std::string,int> xmlMaps;
++
++
++
++public:
++        static ACDDResource* getInstance()
++        {
++                static ACDDResource instance;
++                return &instance;
++        }
++
++
++
++        void setAnim(std::string resName,int resId);
++        int getAnim(std::string resName);
++
++
++
++        void setAnimator(std::string resName,int resId);
++        int getAnimator(std::string resName);
++
++
++
++        void setArray(std::string resName,int resId);
++        int getArray(std::string resName);
++
++
++        void setAttr(std::string resName,int resId);
++        int getAttr(std::string resName);
++
++
++        void setBool(std::string resName,int resId);
++        int getBool(std::string resName);
++
++
++
++        void setColor(std::string resName,int resId);
++        int getColor(std::string resName);
++
++
++
++        void setDimen(std::string resName,int resId);
++        int getDimen(std::string resName);
++
++
++        void setDrawable(std::string resName,int resId);
++        int getDrawable(std::string resName);
++
++
++
++        void setFraction(std::string resName,int resId);
++        int getFraction(std::string resName);
++
++
++        void setId(std::string resName,int resId);
++        int getId(std::string resName);
++
++
++
++        void setInteger(std::string resName,int resId);
++        int getInteger(std::string resName);
++
++
++
++        void setInterpolator(std::string resName,int resId);
++        int getInterpolator(std::string resName);
++
++
++
++        void setLayout(std::string resName,int resId);
++        int getLayout(std::string resName);
++
++
++
++        void setMenu(std::string resName,int resId);
++        int getMenu(std::string resName);
++
++
++        void setMipmap(std::string resName,int resId);
++        int getMipmap(std::string resName);
++
++
++
++        void setPlurals(std::string resName,int resId);
++        int getPlurals(std::string resName);
++
++
++
++        void setRaw(std::string resName,int resId);
++        int getRaw(std::string resName);
++
++
++        void setString(std::string resName,int resId);
++        int getString(std::string resName);
++
++
++        void setStyle(std::string resName,int resId);
++        int getStyle(std::string resName);
++
++
++        void setTransition(std::string resName,int resId);
++        int getTransition(std::string resName);
++
++        void setXml(std::string resName,int resId);
++        int getXml(std::string resName);
++
++protected:
++        struct Object_Creator
++        {
++                Object_Creator()
++                {
++                        ACDDResource::getInstance();
++                }
++        };
++        static Object_Creator _object_creator;
++
++        ACDDResource(){
++        };
++        ~ACDDResource() {
++        }
++
++};
++#endif
+diff --git a/include/androidfw/acdd/ACDDResourceBridge.h b/include/androidfw/acdd/ACDDResourceBridge.h
+new file mode 100755
+index 0000000..0184cd9
+--- /dev/null
++++ b/include/androidfw/acdd/ACDDResourceBridge.h
+@@ -0,0 +1,38 @@
++#ifndef __ACDDResourceBridge__
++#define __ACDDResourceBridge__
++#include <sstream>
++#include <iostream>
++#include <vector>
++#include <string>
++
++
++#include "ACDDResource.h"
++using namespace std;
++class ACDDResourceBridge {
++
++public:
++        static ACDDResourceBridge* getInstance()
++        {
++                static ACDDResourceBridge instance;
++                return &instance;
++        }
++        int  getResourceId(std::string type,std::string resName);
++        void addResourceSymbol(std::string type,std::string resName,int value);
++
++protected:
++        struct Object_Creator
++        {
++                Object_Creator()
++                {
++                        ACDDResourceBridge::getInstance();
++                }
++        };
++        static Object_Creator _object_creator;
++
++        ACDDResourceBridge(){
++        };
++        ~ACDDResourceBridge() {
++        }
++};
++
++#endif
+diff --git a/libs/androidfw/Android.mk b/libs/androidfw/Android.mk
+index 2f28700..c9871f6 100644
+--- a/libs/androidfw/Android.mk
++++ b/libs/androidfw/Android.mk
+@@ -35,7 +35,10 @@ deviceSources := \
+     BackupHelpers.cpp \
+     CursorWindow.cpp
+
+-hostSources := $(commonSources)
++hostSources := $(commonSources)\
++		acdd/ACDDResource.cpp \
++		acdd/ACDDResourceBridge.cpp \
++		acdd/ACDDAaptConfig.cpp
+
+ # For the host
+ # =====================================================
+@@ -44,7 +47,7 @@ LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/Android.mk
+
+ LOCAL_MODULE:= libandroidfw
+ LOCAL_MODULE_TAGS := optional
+-LOCAL_CFLAGS += -DSTATIC_ANDROIDFW_FOR_TOOLS
++LOCAL_CFLAGS += -DSTATIC_ANDROIDFW_FOR_TOOLS -DACDD
+ LOCAL_CFLAGS += -Wall -Werror -Wunused -Wunreachable-code
+ LOCAL_SRC_FILES:= $(hostSources)
+ LOCAL_C_INCLUDES := external/zlib
+diff --git a/libs/androidfw/ResourceTypes.cpp b/libs/androidfw/ResourceTypes.cpp
+index 62aabb1..d989c3f 100644
+--- a/libs/androidfw/ResourceTypes.cpp
++++ b/libs/androidfw/ResourceTypes.cpp
+@@ -36,7 +36,11 @@
+ #include <utils/Log.h>
+ #include <utils/String16.h>
+ #include <utils/String8.h>
++#ifdef ACDD
+
++#include <androidfw/acdd/ACDDAaptConfig.h>
++
++#endif
+ #ifdef __ANDROID__
+ #include <binder/TextOutput.h>
+ #endif
+@@ -58,8 +62,10 @@ namespace android {
+
+ #define IDMAP_MAGIC             0x504D4449
+ #define IDMAP_CURRENT_VERSION   0x00000001
+-
++#ifdef ACDD
++#else
+ #define APP_PACKAGE_ID      0x7f
++#endif
+ #define SYS_PACKAGE_ID      0x01
+
+ static const bool kDebugStringPoolNoisy = false;
+@@ -5038,7 +5044,11 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
+                 }
+
+                 uint32_t packageId = Res_GETPACKAGE(rid) + 1;
++#ifdef  ACDD
++                if (packageId != ACDDAaptConfig::getInstance()->getPackageGroupId() && packageId != SYS_PACKAGE_ID) {
++#else
+                 if (packageId != APP_PACKAGE_ID && packageId != SYS_PACKAGE_ID) {
++#endif
+                     outValue->dataType = Res_value::TYPE_DYNAMIC_REFERENCE;
+                 }
+                 outValue->data = rid;
+@@ -5059,12 +5069,28 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
+                         outValue->data = rid;
+                         outValue->dataType = Res_value::TYPE_DYNAMIC_REFERENCE;
+                         return true;
+-                    } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID) {
++#ifdef ACDD
++                    } else if (packageId == ACDDAaptConfig::getInstance()->getPackageGroupId() || packageId == SYS_PACKAGE_ID) {
++#else
++                     } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID) {
++#endif
+                         // We accept packageId's generated as 0x01 in order to support
+                         // building the android system resources
+                         outValue->data = rid;
+                         return true;
+                     }
++                }else{
++#ifdef  ACDD
++
++  rid=ACDDAaptConfig::getInstance()->getSharedResource(String8(type).string(),String8(name).string());
++fprintf(stdout, "***ACDD*** ACDD on androidfw get  resource from shared resource %s value 0x%02x \n",String8(name).string(),rid);
++
++if(rid!=0) {
++        outValue->data = rid;
++        return true;
++}
++#endif
++
+                 }
+             }
+         }
+@@ -6230,7 +6256,11 @@ DynamicRefTable::DynamicRefTable(uint8_t packageId)
+     memset(mLookupTable, 0, sizeof(mLookupTable));
+
+     // Reserved package ids
++#ifdef ACDD
++    mLookupTable[ACDDAaptConfig::getInstance()->getPackageGroupId()] = ACDDAaptConfig::getInstance()->getPackageGroupId();
++#else
+     mLookupTable[APP_PACKAGE_ID] = APP_PACKAGE_ID;
++#endif
+     mLookupTable[SYS_PACKAGE_ID] = SYS_PACKAGE_ID;
+ }
+
+@@ -6310,7 +6340,11 @@ status_t DynamicRefTable::lookupResourceId(uint32_t* resId) const {
+     uint32_t res = *resId;
+     size_t packageId = Res_GETPACKAGE(res) + 1;
+
++#ifdef ACDD
++    if (packageId == ACDDAaptConfig::getInstance()->getPackageGroupId()) {
++#else
+     if (packageId == APP_PACKAGE_ID) {
++#endif
+         // No lookup needs to be done, app package IDs are absolute.
+         return NO_ERROR;
+     }
+diff --git a/libs/androidfw/acdd/ACDDAaptConfig.cpp b/libs/androidfw/acdd/ACDDAaptConfig.cpp
+new file mode 100755
+index 0000000..6a4dfa9
+--- /dev/null
++++ b/libs/androidfw/acdd/ACDDAaptConfig.cpp
+@@ -0,0 +1,62 @@
++#include <androidfw/acdd/ACDDAaptConfig.h>
++#include <androidfw/acdd/ACDDResourceBridge.h>
++
++#include <iostream>
++#include <string>
++using namespace std;
++
++ACDDAaptConfig::Object_Creator ACDDAaptConfig::_object_creator;
++
++std::string inline delSpaces(std::string &str)
++{
++        for (size_t i = 0; i < str.length(); i++) {
++                if (str[i] == ' ' || str[i] == '\n' || str[i] == '\t') {
++                        str.erase(i, 1);
++                        i--;
++                }
++        }
++        return str;
++}
++
++
++
++bool ACDDAaptConfig::initACDDConig(std::string config,int configType){
++
++        fprintf(stdout, "***ACDD*** initACDDConig %s \n",config.c_str());
++        if (configType==ACDD_AAPT_CONFIG_TYPE_PACKAGE_GROUP_ID) {
++                const char * pkgGroup=config.c_str();
++                fprintf(stderr, "***ACDD*** ACDD Shared Resource pkgGroup %s \n",pkgGroup);
++                if(pkgGroup[0]=='0'&&pkgGroup[1]=='x') {
++                        packageGroupId=strtol(pkgGroup,NULL,16);
++                }
++        }else if (configType==ACDD_AAPT_CONFIG_TYPE_SHARED_RESOURCE_TABLE) {
++                mSharedResourcePath=config;
++        }
++        return true;
++}
++std::string ACDDAaptConfig::getSharedResourcePackageName(){
++
++        return mSharedResourcePackageName;
++}
++std::string ACDDAaptConfig::getSharedResourcePath(){
++
++        return mSharedResourcePath;
++}
++size_t ACDDAaptConfig::getPackageGroupId(){
++        return packageGroupId;
++
++
++}
++bool ACDDAaptConfig::isUpdateVersion(){
++        return updateVersion;
++}
++std::string ACDDAaptConfig::getVersionName(){
++
++        return versionName;
++}
++int ACDDAaptConfig::getSharedResource(std::string type,std::string name){
++
++        return ACDDResourceBridge::getInstance()->getResourceId(type,name);;
++
++
++}
+diff --git a/libs/androidfw/acdd/ACDDResource.cpp b/libs/androidfw/acdd/ACDDResource.cpp
+new file mode 100755
+index 0000000..830eab5
+--- /dev/null
++++ b/libs/androidfw/acdd/ACDDResource.cpp
+@@ -0,0 +1,317 @@
++#include <androidfw/acdd/ACDDResource.h>
++ACDDResource::Object_Creator ACDDResource::_object_creator;
++
++int ACDDResource::getAnim(std::string resName){
++        map<string, int>::iterator itr =animMaps.find(resName);
++        if (itr == animMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setAnim(std::string resName,int resVal){
++        animMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getAnimator(std::string resName){
++        map<string, int>::iterator itr =animatorMaps.find(resName);
++        if (itr == animatorMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setAnimator(std::string resName,int resVal){
++        animatorMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getArray(std::string resName){
++        map<string, int>::iterator itr =arrayMaps.find(resName);
++        if (itr == arrayMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setArray(std::string resName,int resVal){
++        arrayMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getAttr(std::string resName){
++        map<string, int>::iterator itr =attrMaps.find(resName);
++        if (itr == attrMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setAttr(std::string resName,int resVal){
++        attrMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getBool(std::string resName){
++        map<string, int>::iterator itr =boolMaps.find(resName);
++        if (itr == boolMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setBool(std::string resName,int resVal){
++        boolMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getColor(std::string resName){
++        map<string, int>::iterator itr =colorMaps.find(resName);
++        if (itr == colorMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setColor(std::string resName,int resVal){
++        colorMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getDimen(std::string resName){
++        map<string, int>::iterator itr =dimenMaps.find(resName);
++        if (itr == dimenMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setDimen(std::string resName,int resVal){
++        dimenMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getDrawable(std::string resName){
++        map<string, int>::iterator itr =drawableMaps.find(resName);
++        if (itr == drawableMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setDrawable(std::string resName,int resVal){
++        drawableMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getFraction(std::string resName){
++        map<string, int>::iterator itr =fractionMaps.find(resName);
++        if (itr == fractionMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setFraction(std::string resName,int resVal){
++        fractionMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getId(std::string resName){
++        map<string, int>::iterator itr =idMaps.find(resName);
++        if (itr == idMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setId(std::string resName,int resVal){
++        idMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getInteger(std::string resName){
++        map<string, int>::iterator itr =integerMaps.find(resName);
++        if (itr == integerMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setInteger(std::string resName,int resVal){
++        integerMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getInterpolator(std::string resName){
++        map<string, int>::iterator itr =interpolatorMaps.find(resName);
++        if (itr == interpolatorMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setInterpolator(std::string resName,int resVal){
++        interpolatorMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getLayout(std::string resName){
++        map<string, int>::iterator itr =layoutMaps.find(resName);
++        if (itr == layoutMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setLayout(std::string resName,int resVal){
++        layoutMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getMenu(std::string resName){
++        map<string, int>::iterator itr =menuMaps.find(resName);
++        if (itr == menuMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setMenu(std::string resName,int resVal){
++        menuMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getMipmap(std::string resName){
++        map<string, int>::iterator itr =mipmapMaps.find(resName);
++        if (itr == mipmapMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setMipmap(std::string resName,int resVal){
++        mipmapMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getPlurals(std::string resName){
++        map<string, int>::iterator itr =pluralsMaps.find(resName);
++        if (itr == pluralsMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setPlurals(std::string resName,int resVal){
++        pluralsMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getRaw(std::string resName){
++        map<string, int>::iterator itr =rawMaps.find(resName);
++        if (itr == rawMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setRaw(std::string resName,int resVal){
++        rawMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getString(std::string resName){
++        map<string, int>::iterator itr =stringMaps.find(resName);
++        if (itr == stringMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setString(std::string resName,int resVal){
++        stringMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getStyle(std::string resName){
++        map<string, int>::iterator itr =styleMaps.find(resName);
++        if (itr == styleMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setStyle(std::string resName,int resVal){
++        styleMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getTransition(std::string resName){
++        map<string, int>::iterator itr =transitionMaps.find(resName);
++        if (itr == transitionMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setTransition(std::string resName,int resVal){
++        transitionMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
++
++int ACDDResource::getXml(std::string resName){
++        map<string, int>::iterator itr =xmlMaps.find(resName);
++        if (itr == xmlMaps.end()) {
++                return 0x0000;
++        }
++        return itr->second;
++}
++
++
++
++void ACDDResource::setXml(std::string resName,int resVal){
++        xmlMaps.insert(std::pair<std::string, int>(resName,resVal));
++
++}
+diff --git a/libs/androidfw/acdd/ACDDResourceBridge.cpp b/libs/androidfw/acdd/ACDDResourceBridge.cpp
+new file mode 100755
+index 0000000..0727e60
+--- /dev/null
++++ b/libs/androidfw/acdd/ACDDResourceBridge.cpp
+@@ -0,0 +1,159 @@
++#include <androidfw/acdd/ACDDResourceBridge.h>
++#include <androidfw/acdd/ACDDAaptConfig.h>
++bool endwith(std::string  path,std::string tail){
++
++
++    bool ret = path.compare(path.size() - tail.size(), tail.size(), tail) == 0;
++    return ret;
++}
++ACDDResourceBridge::Object_Creator ACDDResourceBridge::_object_creator;
++
++
++std::string getIDType(std::string classLine){
++    if (classLine.find_last_of("$")>0) {
++        classLine=  classLine.substr(classLine.find_last_of("$")+1);
++        return classLine.substr(0,classLine.find_first_of(" "));
++    }
++    return "";
++}
++
++
++
++
++
++void  ACDDResourceBridge::addResourceSymbol(std::string type,std::string resName,int value){
++
++
++
++  if (!type.compare("anim")) {
++          ACDDResource::getInstance()->setAnim(resName,value);
++  }else
++  if (!type.compare("animator")) {
++          ACDDResource::getInstance()->setAnimator(resName,value);
++  }else
++  if (!type.compare("array")) {
++          ACDDResource::getInstance()->setArray(resName,value);
++  }else
++  if (!type.compare("attr")) {
++          ACDDResource::getInstance()->setAttr(resName,value);
++  }else
++  if (!type.compare("bool")) {
++          ACDDResource::getInstance()->setBool(resName,value);
++  }else
++  if (!type.compare("color")) {
++          ACDDResource::getInstance()->setColor(resName,value);
++  }else
++  if (!type.compare("dimen")) {
++          ACDDResource::getInstance()->setDimen(resName,value);
++  }else
++  if (!type.compare("drawable")) {
++          ACDDResource::getInstance()->setDrawable(resName,value);
++  }else
++  if (!type.compare("fraction")) {
++          ACDDResource::getInstance()->setFraction(resName,value);
++  }else
++  if (!type.compare("id")) {
++          ACDDResource::getInstance()->setId(resName,value);
++  }else
++  if (!type.compare("integer")) {
++          ACDDResource::getInstance()->setInteger(resName,value);
++  }else
++  if (!type.compare("interpolator")) {
++          ACDDResource::getInstance()->setInterpolator(resName,value);
++  }else
++  if (!type.compare("layout")) {
++          ACDDResource::getInstance()->setLayout(resName,value);
++  }else
++  if (!type.compare("menu")) {
++          ACDDResource::getInstance()->setMenu(resName,value);
++  }else
++  if (!type.compare("mipmap")) {
++          ACDDResource::getInstance()->setMipmap(resName,value);
++  }else
++  if (!type.compare("plurals")) {
++          ACDDResource::getInstance()->setPlurals(resName,value);
++  }else
++  if (!type.compare("raw")) {
++          ACDDResource::getInstance()->setRaw(resName,value);
++  }else
++  if (!type.compare("string")) {
++          ACDDResource::getInstance()->setString(resName,value);
++  }else
++  if (!type.compare("style")) {
++          ACDDResource::getInstance()->setStyle(resName,value);
++  }else
++  if (!type.compare("transition")) {
++          ACDDResource::getInstance()->setTransition(resName,value);
++  }else
++  if (!type.compare("xml")) {
++          ACDDResource::getInstance()->setXml(resName,value);
++  }else
++  {}
++
++};
++int  ACDDResourceBridge::getResourceId(string type,string resName){
++        if (!type.compare("anim")) {
++                return ACDDResource::getInstance()->getAnim(resName);
++        };
++        if (!type.compare("animator")) {
++                return ACDDResource::getInstance()->getAnimator(resName);
++        };
++        if (!type.compare("array")) {
++                return ACDDResource::getInstance()->getArray(resName);
++        };
++        if (!type.compare("attr")) {
++                return ACDDResource::getInstance()->getAttr(resName);
++        };
++        if (!type.compare("bool")) {
++                return ACDDResource::getInstance()->getBool(resName);
++        };
++        if (!type.compare("color")) {
++                return ACDDResource::getInstance()->getColor(resName);
++        };
++        if (!type.compare("dimen")) {
++                return ACDDResource::getInstance()->getDimen(resName);
++        };
++        if (!type.compare("drawable")) {
++                return ACDDResource::getInstance()->getDrawable(resName);
++        };
++        if (!type.compare("fraction")) {
++                return ACDDResource::getInstance()->getFraction(resName);
++        };
++        if (!type.compare("id")) {
++                return ACDDResource::getInstance()->getId(resName);
++        };
++        if (!type.compare("integer")) {
++                return ACDDResource::getInstance()->getInteger(resName);
++        };
++        if (!type.compare("interpolator")) {
++                return ACDDResource::getInstance()->getInterpolator(resName);
++        };
++        if (!type.compare("layout")) {
++                return ACDDResource::getInstance()->getLayout(resName);
++        };
++        if (!type.compare("menu")) {
++                return ACDDResource::getInstance()->getMenu(resName);
++        };
++        if (!type.compare("mipmap")) {
++                return ACDDResource::getInstance()->getMipmap(resName);
++        };
++        if (!type.compare("plurals")) {
++                return ACDDResource::getInstance()->getPlurals(resName);
++        };
++        if (!type.compare("raw")) {
++                return ACDDResource::getInstance()->getRaw(resName);
++        };
++        if (!type.compare("string")) {
++                return ACDDResource::getInstance()->getString(resName);
++        };
++        if (!type.compare("style")) {
++                return ACDDResource::getInstance()->getStyle(resName);
++        };
++        if (!type.compare("transition")) {
++                return ACDDResource::getInstance()->getTransition(resName);
++        };
++        if (!type.compare("xml")) {
++                return ACDDResource::getInstance()->getXml(resName);
++        };
++        return  0x0000;
++};
+diff --git a/tools/aapt/Android.mk b/tools/aapt/Android.mk
+index b991d55..eb351d8 100644
+--- a/tools/aapt/Android.mk
++++ b/tools/aapt/Android.mk
+@@ -70,7 +70,7 @@ aaptHostStaticLibs := \
+     libziparchive-host \
+     libbase
+
+-aaptCFlags := -DAAPT_VERSION=\"$(BUILD_NUMBER)\"
++aaptCFlags := -DAAPT_VERSION="\"ACDD_2.0.1_$(BUILD_NUMBER)_build_on_$(HOST_OS)(Android 6.0.1)\"" -DACDD
+ aaptCFlags += -Wall -Werror
+
+ ifeq ($(HOST_OS),linux)
+@@ -98,7 +98,8 @@ ifeq (darwin,$(HOST_OS))
+ LOCAL_CFLAGS += -D_DARWIN_UNLIMITED_STREAMS
+ endif
+ LOCAL_C_INCLUDES += $(aaptCIncludes)
+-LOCAL_SRC_FILES := $(aaptSources)
++LOCAL_SRC_FILES := $(aaptSources) \
++                 acdd/ACDDResourceImpl.cpp
+
+ include $(BUILD_HOST_STATIC_LIBRARY)
+
+diff --git a/tools/aapt/Main.cpp b/tools/aapt/Main.cpp
+index f832c60..b3a32ba 100644
+--- a/tools/aapt/Main.cpp
++++ b/tools/aapt/Main.cpp
+@@ -15,6 +15,10 @@
+ #include <getopt.h>
+ #include <cassert>
+
++#ifdef ACDD
++#include "acdd/ACDDResourceImpl.h"
++#endif
++
+ using namespace android;
+
+ static const char* gProgName = "aapt";
+@@ -58,7 +62,7 @@ void usage(void)
+     fprintf(stderr,
+         " %s p[ackage] [-d][-f][-m][-u][-v][-x][-z][-M AndroidManifest.xml] \\\n"
+         "        [-0 extension [-0 extension ...]] [-g tolerance] [-j jarfile] \\\n"
+-        "        [--debug-mode] [--min-sdk-version VAL] [--target-sdk-version VAL] \\\n"
++        "        [--debug-mode] [--ACDD-resoure-id][--ACDD-shared-resources] [--min-sdk-version VAL] [--target-sdk-version VAL] \\\n"
+         "        [--app-version VAL] [--app-version-name TEXT] [--custom-package VAL] \\\n"
+         "        [--rename-manifest-package PACKAGE] \\\n"
+         "        [--rename-instrumentation-target-package PACKAGE] \\\n"
+@@ -132,6 +136,10 @@ void usage(void)
+         "   --debug-mode\n"
+         "       inserts android:debuggable=\"true\" in to the application node of the\n"
+         "       manifest, making the application debuggable even on production devices.\n"
++        "   --ACDD-resoure-id\n"
++        "   enable  ACDD custom-package resource id,default value is  0x7f\n"
++        "   --ACDD-shared-resources\n"
++        "   enable  ACDD shared resource  table\n"
+         "   --include-meta-data\n"
+         "       when used with \"dump badging\" also includes meta-data tags.\n"
+         "   --pseudo-localize\n"
+@@ -500,7 +508,34 @@ int main(int argc, char* const argv[])
+             case '-':
+                 if (strcmp(cp, "-debug-mode") == 0) {
+                     bundle.setDebugMode(true);
+-                } else if (strcmp(cp, "-min-sdk-version") == 0) {
++                  }
++#ifdef ACDD
++                  else if (strcmp(cp, "-ACDD-resoure-id") == 0) {
++
++                        argc--;
++                        argv++;
++                        if (!argc) {
++                                fprintf(stderr, "ERROR: No argument supplied for '--ACDD-resoure-id' option\n");
++                                wantUsage = true;
++                                goto bail;
++                        }
++                        ACDDAaptConfig::getInstance()->initACDDConig(argv[0],ACDD_AAPT_CONFIG_TYPE_PACKAGE_GROUP_ID);
++
++
++                } else if (strcmp(cp, "-ACDD-shared-resources") == 0) {
++
++                        argc--;
++                        argv++;
++                        if (!argc) {
++                                fprintf(stderr, "ERROR: No argument supplied for '--ACDD-shared-resources' option\n");
++                                wantUsage = true;
++                                goto bail;
++                        }
++                        ACDDAaptConfig::getInstance()->initACDDConig(argv[0],ACDD_AAPT_CONFIG_TYPE_SHARED_RESOURCE_TABLE);
++                        acdd_parseResourceTable();
++                }
++#endif
++               else if (strcmp(cp, "-min-sdk-version") == 0) {
+                     argc--;
+                     argv++;
+                     if (!argc) {
+diff --git a/tools/aapt/Main.h b/tools/aapt/Main.h
+index e84c4c5..ded8d89 100644
+--- a/tools/aapt/Main.h
++++ b/tools/aapt/Main.h
+@@ -18,7 +18,12 @@
+ #include "ResourceFilter.h"
+ #include "ZipFile.h"
+
+-
++#ifdef ACDD
++#include <algorithm>
++#include <androidfw/acdd/ACDDAaptConfig.h>
++#include <androidfw/acdd/ACDDResource.h>
++#include <androidfw/acdd/ACDDResourceBridge.h>
++#endif
+ /* Benchmarking Flag */
+ //#define BENCHMARK 1
+
+diff --git a/tools/aapt/Resource.cpp b/tools/aapt/Resource.cpp
+index 5d20815..43d13d0 100644
+--- a/tools/aapt/Resource.cpp
++++ b/tools/aapt/Resource.cpp
+@@ -20,6 +20,9 @@
+
+ #include <algorithm>
+
++#ifdef ACDD
++#include <androidfw/acdd/ACDDAaptConfig.h>
++#endif
+ // STATUST: mingw does seem to redefine UNKNOWN_ERROR from our enum value, so a cast is necessary.
+
+ #if !defined(_WIN32)
+@@ -494,7 +497,7 @@ static int validateAttr(const String8& path, const ResTable& table,
+                         value.data);
+                 return ATTR_NOT_FOUND;
+             }
+-
++
+             pool = table.getTableStringBlock(strIdx);
+             #if 0
+             if (pool != NULL) {
+@@ -743,7 +746,7 @@ bool addTagAttribute(const sp<XMLNode>& node, const char* ns8,
+         // don't stop the build.
+         return true;
+     }
+-
++
+     node->addAttribute(ns, attr, String16(value));
+     return true;
+ }
+@@ -822,7 +825,7 @@ status_t massageManifest(Bundle* bundle, sp<XMLNode> root)
+             bundle->setVersionName(strdup(String8(attr->string).string()));
+         }
+     }
+-
++
+     sp<XMLNode> vers = root->getChildElement(String16(), String16("uses-sdk"));
+     if (bundle->getMinSdkVersion() != NULL
+             || bundle->getTargetSdkVersion() != NULL
+@@ -831,7 +834,7 @@ status_t massageManifest(Bundle* bundle, sp<XMLNode> root)
+             vers = XMLNode::newElement(root->getFilename(), String16(), String16("uses-sdk"));
+             root->insertChildAt(vers, 0);
+         }
+-
++
+         if (!addTagAttribute(vers, RESOURCES_ANDROID_NAMESPACE, "minSdkVersion",
+                 bundle->getMinSdkVersion(), errorOnFailedInsert)) {
+             return UNKNOWN_ERROR;
+@@ -931,7 +934,7 @@ status_t massageManifest(Bundle* bundle, sp<XMLNode> root)
+             }
+         }
+     }
+-
++
+     // Generate split name if feature is present.
+     const XMLNode::attribute_entry* attr = root->getAttribute(String16(), String16("featureName"));
+     if (attr != NULL) {
+@@ -1196,7 +1199,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+     // --------------------------------------------------------------
+
+     // resType -> leafName -> group
+-    KeyedVector<String8, sp<ResourceTypeSet> > *resources =
++    KeyedVector<String8, sp<ResourceTypeSet> > *resources =
+             new KeyedVector<String8, sp<ResourceTypeSet> >;
+     collect_files(assets, resources);
+
+@@ -1228,7 +1231,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+     // now go through any resource overlays and collect their files
+     sp<AaptAssets> current = assets->getOverlay();
+     while(current.get()) {
+-        KeyedVector<String8, sp<ResourceTypeSet> > *resources =
++        KeyedVector<String8, sp<ResourceTypeSet> > *resources =
+                 new KeyedVector<String8, sp<ResourceTypeSet> >;
+         current->setResources(resources);
+         collect_files(current, resources);
+@@ -1331,7 +1334,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+     // compile resources
+     current = assets;
+     while(current.get()) {
+-        KeyedVector<String8, sp<ResourceTypeSet> > *resources =
++        KeyedVector<String8, sp<ResourceTypeSet> > *resources =
+                 current->getResources();
+
+         ssize_t index = resources->indexOfKey(String8("values"));
+@@ -1340,7 +1343,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+             ssize_t res;
+             while ((res=it.next()) == NO_ERROR) {
+                 sp<AaptFile> file = it.getFile();
+-                res = compileResourceFile(bundle, assets, file, it.getParams(),
++                res = compileResourceFile(bundle, assets, file, it.getParams(),
+                                           (current!=assets), &table);
+                 if (res != NO_ERROR) {
+                     hasErrors = true;
+@@ -1552,7 +1555,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+     if (table.validateLocalizations()) {
+         hasErrors = true;
+     }
+-
++
+     if (hasErrors) {
+         return UNKNOWN_ERROR;
+     }
+@@ -1601,7 +1604,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+
+     ResTable finalResTable;
+     sp<AaptFile> resFile;
+-
++
+     if (table.hasResources()) {
+         sp<AaptSymbols> symbols = assets->getSymbolsFor(String8("R"));
+         err = table.addSymbols(symbols, bundle->getSkipSymbolsWithoutDefaultLocalization());
+@@ -1825,7 +1828,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+                 ssize_t index = block.indexOfAttribute(RESOURCES_ANDROID_NAMESPACE, "name");
+                 const char16_t* id = block.getAttributeStringValue(index, &len);
+                 if (id == NULL) {
+-                    fprintf(stderr, "%s:%d: missing name attribute in element <%s>.\n",
++                    fprintf(stderr, "%s:%d: missing name attribute in element <%s>.\n",
+                             manifestPath.string(), block.getLineNumber(),
+                             String8(block.getElementName(&len)).string());
+                     hasErrors = true;
+@@ -2016,7 +2019,7 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets, sp<ApkBuil
+             return err;
+         }
+     }
+-
++
+     return err;
+ }
+
+@@ -2287,7 +2290,7 @@ static status_t writeLayoutClasses(
+         fprintf(fp, "%s */\n", getIndentSpace(indent));
+
+         ann.printAnnotations(fp, indentStr);
+-
++
+         fprintf(fp,
+                 "%spublic static final int[] %s = {\n"
+                 "%s",
+diff --git a/tools/aapt/ResourceTable.cpp b/tools/aapt/ResourceTable.cpp
+index d5a09d8..9565d45 100644
+--- a/tools/aapt/ResourceTable.cpp
++++ b/tools/aapt/ResourceTable.cpp
+@@ -66,7 +66,7 @@ status_t compileXmlFile(const Bundle* bundle,
+     if (root == NULL) {
+         return UNKNOWN_ERROR;
+     }
+-
++
+     return compileXmlFile(bundle, assets, resourceName, root, outTarget, table, options);
+ }
+
+@@ -89,7 +89,7 @@ status_t compileXmlFile(const Bundle* bundle,
+     }
+
+     bool hasErrors = false;
+-
++
+     if ((options&XML_COMPILE_ASSIGN_ATTRIBUTE_IDS) != 0) {
+         status_t err = root->assignResourceIds(assets, table);
+         if (err != NO_ERROR) {
+@@ -129,7 +129,7 @@ status_t compileXmlFile(const Bundle* bundle,
+     }
+
+     target->setCompressionMethod(ZipEntry::kCompressDeflated);
+-
++
+     return err;
+ }
+
+@@ -245,7 +245,7 @@ static String16 mayOrMust(int type, int flags)
+     if ((type&(~flags)) == 0) {
+         return String16("<p>Must");
+     }
+-
++
+     return String16("<p>May");
+ }
+
+@@ -284,7 +284,7 @@ struct PendingAttribute
+     String16 comment;
+     bool hasErrors;
+     bool added;
+-
++
+     PendingAttribute(String16 _package, const sp<AaptFile>& in,
+             ResXMLTree& block, bool _appendComment)
+         : myPackage(_package)
+@@ -295,7 +295,7 @@ struct PendingAttribute
+         , added(false)
+     {
+     }
+-
++
+     status_t createIfNeeded(ResourceTable* outTable)
+     {
+         if (added || hasErrors) {
+@@ -304,14 +304,14 @@ struct PendingAttribute
+         added = true;
+
+         String16 attr16("attr");
+-
++
+         if (outTable->hasBagOrEntry(myPackage, attr16, ident)) {
+             sourcePos.error("Attribute \"%s\" has already been defined\n",
+                     String8(ident).string());
+             hasErrors = true;
+             return UNKNOWN_ERROR;
+         }
+-
++
+         char numberStr[16];
+         sprintf(numberStr, "%d", type);
+         status_t err = outTable->addBag(sourcePos, myPackage,
+@@ -337,7 +337,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+                                  bool inStyleable = false)
+ {
+     PendingAttribute attr(myPackage, in, block, inStyleable);
+-
++
+     const String16 attr16("attr");
+     const String16 id16("id");
+
+@@ -348,7 +348,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+     ResXMLTree::event_code_t code;
+     size_t len;
+     status_t err;
+-
++
+     ssize_t identIdx = block.indexOfAttribute(NULL, "name");
+     if (identIdx >= 0) {
+         attr.ident = String16(block.getAttributeStringValue(identIdx, &len));
+@@ -443,7 +443,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+     }
+
+     String16 enumOrFlagsComment;
+-
++
+     while ((code=block.next()) != ResXMLTree::END_DOCUMENT && code != ResXMLTree::BAD_DOCUMENT) {
+         if (code == ResXMLTree::START_TAG) {
+             uint32_t localType = 0;
+@@ -459,7 +459,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+             }
+
+             attr.createIfNeeded(outTable);
+-
++
+             if (attr.type == ResTable_map::TYPE_ANY) {
+                 // No type was explicitly stated, so supplying enum tags
+                 // implicitly creates an enum or flag.
+@@ -531,7 +531,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+                                                 "<colgroup align=\"left\" />\n"
+                                                 "<tr><th>Constant</th><th>Value</th><th>Description</th></tr>"));
+                 }
+-
++
+                 enumOrFlagsComment.append(String16("\n<tr><td><code>"));
+                 enumOrFlagsComment.append(itemIdent);
+                 enumOrFlagsComment.append(String16("</code></td><td>"));
+@@ -541,7 +541,7 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+                     enumOrFlagsComment.append(String16(block.getComment(&len)));
+                 }
+                 enumOrFlagsComment.append(String16("</td></tr>"));
+-
++
+                 err = outTable->addBag(SourcePos(in->getPrintableSource(), block.getLineNumber()),
+                                        myPackage,
+                                        attr16, attr.ident, String16(""),
+@@ -571,11 +571,11 @@ static status_t compileAttribute(const sp<AaptFile>& in,
+             }
+         }
+     }
+-
++
+     if (!attr.hasErrors && attr.added) {
+         appendTypeInfo(outTable, myPackage, attr16, attr.ident, attr.type, gFormatFlags);
+     }
+-
++
+     if (!attr.hasErrors && enumOrFlagsComment.size() > 0) {
+         enumOrFlagsComment.append(String16("\n</table>"));
+         outTable->appendTypeComment(myPackage, attr16, attr.ident, enumOrFlagsComment);
+@@ -712,7 +712,7 @@ status_t parseAndAddEntry(Bundle* bundle,
+                             curTag, &str, curIsStyled ? &spans : NULL,
+                             isFormatted, pseudolocalize);
+
+-    if (err < NO_ERROR) {
++    if (err < NO_ERROR) {
+         return err;
+     }
+
+@@ -946,7 +946,7 @@ status_t compileResourceFile(Bundle* bundle,
+
+             } else if (strcmp16(block.getElementName(&len), public16.string()) == 0) {
+                 SourcePos srcPos(in->getPrintableSource(), block.getLineNumber());
+-
++
+                 String16 type;
+                 ssize_t typeIdx = block.indexOfAttribute(NULL, "type");
+                 if (typeIdx < 0) {
+@@ -1018,7 +1018,7 @@ status_t compileResourceFile(Bundle* bundle,
+
+             } else if (strcmp16(block.getElementName(&len), public_padding16.string()) == 0) {
+                 SourcePos srcPos(in->getPrintableSource(), block.getLineNumber());
+-
++
+                 String16 type;
+                 ssize_t typeIdx = block.indexOfAttribute(NULL, "type");
+                 if (typeIdx < 0) {
+@@ -1079,7 +1079,7 @@ status_t compileResourceFile(Bundle* bundle,
+                             start, end);
+                     hasErrors = localHasErrors = true;
+                 }
+-
++
+                 String16 comment(
+                     block.getComment(&len) ? block.getComment(&len) : nulStr);
+                 for (uint32_t curIdent=start; curIdent<=end; curIdent++) {
+@@ -1090,7 +1090,7 @@ status_t compileResourceFile(Bundle* bundle,
+                     char buf[64];
+                     sprintf(buf, "%d", (int)(end-curIdent+1));
+                     curName.append(String16(buf));
+-
++
+                     err = outTable->addEntry(srcPos, myPackage, type, curName,
+                                              String16("padding"), NULL, &curParams, false,
+                                              ResTable_map::TYPE_STRING, overwrite);
+@@ -1150,7 +1150,7 @@ status_t compileResourceFile(Bundle* bundle,
+
+             } else if (strcmp16(block.getElementName(&len), java_symbol16.string()) == 0) {
+                 SourcePos srcPos(in->getPrintableSource(), block.getLineNumber());
+-
++
+                 String16 type;
+                 ssize_t typeIdx = block.indexOfAttribute(NULL, "type");
+                 if (typeIdx < 0) {
+@@ -1193,7 +1193,7 @@ status_t compileResourceFile(Bundle* bundle,
+
+             } else if (strcmp16(block.getElementName(&len), add_resource16.string()) == 0) {
+                 SourcePos srcPos(in->getPrintableSource(), block.getLineNumber());
+-
++
+                 String16 typeName;
+                 ssize_t typeIdx = block.indexOfAttribute(NULL, "type");
+                 if (typeIdx < 0) {
+@@ -1220,10 +1220,10 @@ status_t compileResourceFile(Bundle* bundle,
+                     }
+                 }
+                 continue;
+-
++
+             } else if (strcmp16(block.getElementName(&len), declare_styleable16.string()) == 0) {
+                 SourcePos srcPos(in->getPrintableSource(), block.getLineNumber());
+-
++
+                 String16 ident;
+                 ssize_t identIdx = block.indexOfAttribute(NULL, "name");
+                 if (identIdx < 0) {
+@@ -1245,7 +1245,7 @@ status_t compileResourceFile(Bundle* bundle,
+                         srcPos.error("Unable to create symbols!\n");
+                         return UNKNOWN_ERROR;
+                     }
+-
++
+                     String16 comment(
+                         block.getComment(&len) ? block.getComment(&len) : nulStr);
+                     styleSymbols->appendComment(String8(ident), comment, srcPos);
+@@ -1366,7 +1366,7 @@ status_t compileResourceFile(Bundle* bundle,
+                         formatted.setTo(block.getAttributeStringValue(i, &length));
+                     }
+                 }
+-
++
+                 if (name.size() > 0) {
+                     if (locale.size() == 0) {
+                         outTable->addDefaultLocalization(name);
+@@ -1527,7 +1527,7 @@ status_t compileResourceFile(Bundle* bundle,
+             }
+
+             String16 comment(block.getComment(&len) ? block.getComment(&len) : nulStr);
+-
++
+             if (curIsBag) {
+                 // Figure out the parent of this bag...
+                 String16 parentIdent;
+@@ -1550,7 +1550,7 @@ status_t compileResourceFile(Bundle* bundle,
+                         hasErrors = localHasErrors = true;
+                     }
+                 }
+-
++
+                 ssize_t elmIndex = 0;
+                 char elmIndexStr[14];
+                 while ((code=block.next()) != ResXMLTree::END_DOCUMENT
+@@ -1764,7 +1764,11 @@ ResourceTable::ResourceTable(Bundle* bundle, const String16& assetsPackage, Reso
+     switch (mPackageType) {
+         case App:
+         case AppFeature:
++#ifdef ACDD
++            packageId=ACDDAaptConfig::getInstance()->getPackageGroupId();
++#else
+             packageId = 0x7f;
++#endif
+             break;
+
+         case System:
+@@ -1819,7 +1823,7 @@ status_t ResourceTable::addIncludedResources(Bundle* bundle, const sp<AaptAssets
+
+         const ResTable& featureTable = featureAssetManager.getResources(false);
+         mTypeIdOffset = std::max(mTypeIdOffset,
+-                findLargestTypeIdForPackage(featureTable, mAssetsPackage));
++                findLargestTypeIdForPackage(featureTable, mAssetsPackage));
+     }
+
+     return NO_ERROR;
+@@ -1869,7 +1873,7 @@ status_t ResourceTable::addEntry(const SourcePos& sourcePos,
+                 String8(type).string(), String8(name).string(), String8(package).string());
+         return UNKNOWN_ERROR;
+     }
+-
++
+     sp<Entry> e = getEntry(package, type, name, sourcePos, overwrite,
+                            params, doSetIndex);
+     if (e == NULL) {
+@@ -1926,7 +1930,7 @@ status_t ResourceTable::startBag(const SourcePos& sourcePos,
+     if (e == NULL) {
+         return UNKNOWN_ERROR;
+     }
+-
++
+     // If a parent is explicitly specified, set it.
+     if (bagParent.size() > 0) {
+         e->setParent(bagParent);
+@@ -1936,7 +1940,7 @@ status_t ResourceTable::startBag(const SourcePos& sourcePos,
+         return result;
+     }
+
+-    if (overlay && replace) {
++    if (overlay && replace) {
+         return e->emptyBag(sourcePos);
+     }
+     return result;
+@@ -2087,7 +2091,7 @@ bool ResourceTable::appendTypeComment(const String16& package,
+     if (comment.size() <= 0) {
+         return true;
+     }
+-
++
+     sp<Package> p = mPackages.valueFor(package);
+     if (p != NULL) {
+         sp<Type> t = p->getTypes().valueFor(type);
+@@ -2159,7 +2163,7 @@ uint32_t ResourceTable::getResId(const String16& package,
+                 return 0;
+             }
+         }
+-
++
+         return ResourceIdCache::store(package, type, name, onlyPublic, rid);
+     }
+
+@@ -2295,7 +2299,7 @@ bool ResourceTable::stringToValue(Res_value* outValue, StringPool* pool,
+             // Caller will fill this in later.
+             outValue->data = 0;
+         }
+-
++
+         if (outStr) {
+             *outStr = finalStr;
+         }
+@@ -2692,7 +2696,7 @@ status_t ResourceTable::addSymbols(const sp<AaptSymbols>& outSymbols,
+                     }
+
+                     typeSymbols->addSymbol(String8(c->getName()), rid, c->getPos());
+-
++
+                     String16 comment(c->getComment());
+                     typeSymbols->appendComment(String8(c->getName()), comment, c->getPos());
+                     //printf("Type symbol [%08x] %s comment: %s\n", rid,
+@@ -2825,7 +2829,11 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+     for (size_t i = 0; i < basePackageCount; i++) {
+         size_t packageId = table.getBasePackageId(i);
+         String16 packageName(table.getBasePackageName(i));
++#ifdef ACDD
++        if (packageId > 0x01 && packageId != ACDDAaptConfig::getInstance()->getPackageGroupId()&&
++#else
+         if (packageId > 0x01 && packageId != 0x7f &&
++#endif
+                 packageName != String16("android")) {
+             libraryPackages.add(sp<Package>(new Package(packageName, packageId)));
+         }
+@@ -3016,7 +3024,7 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+             // the item at t->getOrderedConfigs().itemAt(i).
+             Vector<bool> validResources;
+             validResources.insertAt(false, 0, N);
+-
++
+             // First write the typeSpec chunk, containing information about
+             // each resource entry in this type.
+             {
+@@ -3034,7 +3042,7 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+                 tsHeader->header.size = htodl(typeSpecSize);
+                 tsHeader->id = ti+1;
+                 tsHeader->entryCount = htodl(N);
+-
++
+                 uint32_t* typeSpecFlags = (uint32_t*)
+                     (((uint8_t*)data->editData())
+                         + typeSpecStart + sizeof(ResTable_typeSpec));
+@@ -3069,7 +3077,7 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+                     }
+                 }
+             }
+-
++
+             if (skipEntireType) {
+                 continue;
+             }
+@@ -3080,9 +3088,9 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+             if (t != NULL) {
+                 uniqueConfigs = t->getUniqueConfigs();
+             }
+-
++
+             const size_t typeSize = sizeof(ResTable_type) + sizeof(uint32_t)*N;
+-
++
+             const size_t NC = uniqueConfigs.size();
+             for (size_t ci=0; ci<NC; ci++) {
+                 const ConfigDescription& config = uniqueConfigs[ci];
+@@ -3111,11 +3119,11 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+                         config.screenHeightDp,
+                         config.screenLayout);
+                 }
+-
++
+                 if (filterable && !filter->match(config)) {
+                     continue;
+                 }
+-
++
+                 const size_t typeStart = data->getSize();
+
+                 ResTable_type* tHeader = (ResTable_type*)
+@@ -3241,7 +3249,7 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+             return err;
+         }
+     }
+-
++
+     ssize_t strStart = dest->getSize();
+     status_t err = valueStrings.writeStringBlock(dest);
+     if (err != NO_ERROR) {
+@@ -3272,7 +3280,7 @@ status_t ResourceTable::flatten(Bundle* bundle, const sp<const ResourceFilter>&
+         fprintf(stderr, "**** total resource table size: %zu / %zu%% strings\n",
+                 dest->getSize(), (size_t)(strAmt*100)/dest->getSize());
+     }
+-
++
+     return NO_ERROR;
+ }
+
+@@ -3493,7 +3501,7 @@ status_t ResourceTable::Entry::addToBag(const SourcePos& sourcePos,
+     }
+
+     Item item(sourcePos, isId, value, style, format);
+-
++
+     // XXX NOTE: there is an error if you try to have a bag with two keys,
+     // one an attr and one an id, with the same name.  Not something we
+     // currently ever have to worry about.
+@@ -3590,7 +3598,7 @@ status_t ResourceTable::Entry::assignResourceIds(ResourceTable* table,
+                                                  const String16& /* package */)
+ {
+     bool hasErrors = false;
+-
++
+     if (mType == TYPE_BAG) {
+         const char* errorMsg;
+         const String16 style16("style");
+@@ -3728,7 +3736,7 @@ ssize_t ResourceTable::Entry::flatten(Bundle* /* bundle */, const sp<AaptFile>&
+             items.add(it.bagKeyId, &it);
+         }
+         N = items.size();
+-
++
+         ResTable_map_entry mapHeader;
+         memcpy(&mapHeader, &header, sizeof(header));
+         mapHeader.size = htods(sizeof(mapHeader));
+@@ -3861,10 +3869,10 @@ sp<ResourceTable::Entry> ResourceTable::Type::getEntry(const String16& entry,
+             c->setEntryIndex(pos);
+         }
+     }
+-
++
+     ConfigDescription cdesc;
+     if (config) cdesc = *config;
+-
++
+     sp<Entry> e = c->getEntries().valueFor(cdesc);
+     if (e == NULL) {
+         if (kIsDebug) {
+@@ -3914,7 +3922,7 @@ sp<ResourceTable::Entry> ResourceTable::Type::getEntry(const String16& entry,
+         }
+         */
+     }
+-
++
+     return e;
+ }
+
+@@ -4015,12 +4023,12 @@ status_t ResourceTable::Type::applyPublicEntryOrder()
+     }
+
+     //printf("Copying back in %d non-public configs, have %d\n", N, origOrder.size());
+-
++
+     if (N != origOrder.size()) {
+         printf("Internal error: remaining private symbol count mismatch\n");
+         N = origOrder.size();
+     }
+-
++
+     j = 0;
+     for (i=0; i<N; i++) {
+         sp<ConfigList> e = origOrder.itemAt(i);
+@@ -4316,7 +4324,7 @@ sp<const ResourceTable::Entry> ResourceTable::getEntry(uint32_t resID,
+         fprintf(stderr, "warning: Entry not found for resource #%08x\n", resID);
+         return NULL;
+     }
+-
++
+     ConfigDescription cdesc;
+     if (config) cdesc = *config;
+     sp<Entry> e = c->getEntries().valueFor(cdesc);
+@@ -4324,7 +4332,7 @@ sp<const ResourceTable::Entry> ResourceTable::getEntry(uint32_t resID,
+         fprintf(stderr, "warning: Entry configuration not found for resource #%08x\n", resID);
+         return NULL;
+     }
+-
++
+     return e;
+ }
+
+diff --git a/tools/aapt/ResourceTable.h b/tools/aapt/ResourceTable.h
+index c4bdf09..7278e69 100644
+--- a/tools/aapt/ResourceTable.h
++++ b/tools/aapt/ResourceTable.h
+@@ -17,6 +17,10 @@
+ #include "StringPool.h"
+ #include "Symbol.h"
+
++#ifdef ACDD
++#include <androidfw/acdd/ACDDAaptConfig.h>
++#endif
++
+ class XMLNode;
+ class ResourceTable;
+
+@@ -155,7 +159,7 @@ public:
+                     bool overlay = false,
+                     bool replace = false,
+                     bool isId = false);
+-
++
+     status_t addBag(const SourcePos& pos,
+                     const String16& package,
+                     const String16& type,
+@@ -192,10 +196,10 @@ public:
+                            const String16& type,
+                            const String16& name,
+                            const String16& comment);
+-
++
+     void canAddEntry(const SourcePos& pos,
+         const String16& package, const String16& type, const String16& name);
+-
++
+     size_t size() const;
+     size_t numLocalResources() const;
+     bool hasResources() const;
+@@ -232,7 +236,7 @@ public:
+                       bool onlyPublic = true) const;
+
+     static bool isValidResourceName(const String16& s);
+-
++
+     bool stringToValue(Res_value* outValue, StringPool* pool,
+                        const String16& str,
+                        bool preserveSpaces, bool coerceType,
+@@ -335,7 +339,7 @@ public:
+             TYPE_ITEM,
+             TYPE_BAG
+         };
+-
++
+         String16 getName() const { return mName; }
+         type getType() const { return mType; }
+
+@@ -345,7 +349,7 @@ public:
+         status_t makeItABag(const SourcePos& sourcePos);
+
+         status_t emptyBag(const SourcePos& sourcePos);
+-
++
+         status_t setItem(const SourcePos& pos,
+                          const String16& value,
+                          const Vector<StringPool::entry_style_span>* style = NULL,
+@@ -393,35 +397,35 @@ public:
+         uint32_t mParentId;
+         SourcePos mPos;
+     };
+-
++
+     class ConfigList : public RefBase {
+     public:
+         ConfigList(const String16& name, const SourcePos& pos)
+             : mName(name), mPos(pos), mPublic(false), mEntryIndex(-1) { }
+         virtual ~ConfigList() { }
+-
++
+         String16 getName() const { return mName; }
+         const SourcePos& getPos() const { return mPos; }
+-
++
+         void appendComment(const String16& comment, bool onlyIfEmpty = false);
+         const String16& getComment() const { return mComment; }
+-
++
+         void appendTypeComment(const String16& comment);
+         const String16& getTypeComment() const { return mTypeComment; }
+-
++
+         // Index of this entry in its Type.
+         int32_t getEntryIndex() const { return mEntryIndex; }
+         void setEntryIndex(int32_t index) { mEntryIndex = index; }
+-
++
+         void setPublic(bool pub) { mPublic = pub; }
+         bool getPublic() const { return mPublic; }
+         void setPublicSourcePos(const SourcePos& pos) { mPublicSourcePos = pos; }
+         const SourcePos& getPublicSourcePos() { return mPublicSourcePos; }
+-
++
+         void addEntry(const ResTable_config& config, const sp<Entry>& entry) {
+             mEntries.add(config, entry);
+         }
+-
++
+         const DefaultKeyedVector<ConfigDescription, sp<Entry> >& getEntries() const { return mEntries; }
+     private:
+         const String16 mName;
+@@ -433,7 +437,7 @@ public:
+         int32_t mEntryIndex;
+         DefaultKeyedVector<ConfigDescription, sp<Entry> > mEntries;
+     };
+-
++
+     class Public {
+     public:
+         Public() : sourcePos(), ident(0) { }
+@@ -445,19 +449,19 @@ public:
+         Public(const Public& o) : sourcePos(o.sourcePos),
+             comment(o.comment), ident(o.ident) { }
+         ~Public() { }
+-
++
+         Public& operator=(const Public& o) {
+             sourcePos = o.sourcePos;
+             comment = o.comment;
+             ident = o.ident;
+             return *this;
+         }
+-
++
+         SourcePos   sourcePos;
+         String16    comment;
+         uint32_t    ident;
+     };
+-
++
+     class Type : public RefBase {
+     public:
+         Type(const String16& name, const SourcePos& pos)
+@@ -468,9 +472,9 @@ public:
+         status_t addPublic(const SourcePos& pos,
+                            const String16& name,
+                            const uint32_t ident);
+-
++
+         void canAddEntry(const String16& name);
+-
++
+         String16 getName() const { return mName; }
+         sp<Entry> getEntry(const String16& entry,
+                            const SourcePos& pos,
+@@ -499,7 +503,7 @@ public:
+         const DefaultKeyedVector<String16, sp<ConfigList> >& getConfigs() const { return mConfigs; }
+         const Vector<sp<ConfigList> >& getOrderedConfigs() const { return mOrderedConfigs; }
+         const SortedVector<String16>& getCanAddEntries() const { return mCanAddEntries; }
+-
++
+         const SourcePos& getPos() const { return mPos; }
+
+     private:
+diff --git a/tools/aapt/XMLNode.cpp b/tools/aapt/XMLNode.cpp
+index ca3f687..b5a92b8 100644
+--- a/tools/aapt/XMLNode.cpp
++++ b/tools/aapt/XMLNode.cpp
+@@ -629,6 +629,55 @@ sp<XMLNode> XMLNode::parse(const sp<AaptFile>& file)
+     return state.root;
+ }
+
++
++#ifdef ACDD
++sp<XMLNode> XMLNode::parse( char const* filepath)
++{
++    char buf[16384];
++    int fd = open(filepath, O_RDONLY | O_BINARY);
++    if (fd < 0) {
++        SourcePos(String8(filepath), -1).error("Unable to open file for read: %s ",
++                strerror(errno));
++        return NULL;
++    }
++
++    XML_Parser parser = XML_ParserCreateNS(NULL, 1);
++    ParseState state;
++    state.filename = filepath;
++    state.parser = parser;
++    XML_SetUserData(parser, &state);
++    XML_SetElementHandler(parser, startElement, endElement);
++    XML_SetNamespaceDeclHandler(parser, startNamespace, endNamespace);
++    XML_SetCharacterDataHandler(parser, characterData);
++    XML_SetCommentHandler(parser, commentData);
++
++    ssize_t len;
++    bool done;
++    do {
++        len = read(fd, buf, sizeof(buf));
++        done = len < (ssize_t)sizeof(buf);
++        if (len < 0) {
++            SourcePos(String8(filepath), -1).error("Error reading file: %s\n", strerror(errno));
++            close(fd);
++            return NULL;
++        }
++        if (XML_Parse(parser, buf, len, done) == XML_STATUS_ERROR) {
++            SourcePos(String8(filepath), (int)XML_GetCurrentLineNumber(parser)).error(
++                    "Error parsing XML: %s\n", XML_ErrorString(XML_GetErrorCode(parser)));
++            close(fd);
++            return NULL;
++        }
++    } while (!done);
++
++    XML_ParserFree(parser);
++    if (state.root == NULL) {
++        SourcePos(String8(filepath), -1).error("No XML data generated when parsing");
++    }
++    close(fd);
++    return state.root;
++}
++#endif
++
+ XMLNode::XMLNode()
+     : mNextAttributeIndex(0x80000000)
+     , mStartLineNumber(0)
+@@ -1022,6 +1071,13 @@ status_t XMLNode::assignResourceIds(const sp<AaptAssets>& assets,
+                     identifierForName(e.name.string(), e.name.size(),
+                                       attr.string(), attr.size(),
+                                       pkg.string(), pkg.size());
++
++#ifdef ACDD
++            if(res==0) {
++              res=  ACDDResourceBridge::getInstance()->getResourceId("attr",String8(e.name).string());
++               fprintf(stdout, "***ACDD*** ACDD get attr resource from shared resource %s value %02x \n",String8(e.name).string(),res);
++            }
++#endif
+             if (res != 0) {
+                 if (kIsDebug) {
+                     printf("XML attribute name %s: resid=0x%08x\n",
+diff --git a/tools/aapt/XMLNode.h b/tools/aapt/XMLNode.h
+index 3161f65..72de6f8 100644
+--- a/tools/aapt/XMLNode.h
++++ b/tools/aapt/XMLNode.h
+@@ -9,7 +9,9 @@
+
+ #include "StringPool.h"
+ #include "ResourceTable.h"
+-
++#ifdef ACDD
++#include <androidfw/acdd/ACDDResourceBridge.h>
++#endif
+ class XMLNode;
+
+ extern const char* const RESOURCES_ROOT_NAMESPACE;
+@@ -39,38 +41,41 @@ class XMLNode : public RefBase
+ public:
+     static sp<XMLNode> parse(const sp<AaptFile>& file);
+
++#ifdef ACDD
++    static sp<XMLNode> parse( char const* filepath);
++#endif
+     static inline
+     sp<XMLNode> newNamespace(const String8& filename, const String16& prefix, const String16& uri) {
+         return new XMLNode(filename, prefix, uri, true);
+     }
+-
++
+     static inline
+     sp<XMLNode> newElement(const String8& filename, const String16& ns, const String16& name) {
+         return new XMLNode(filename, ns, name, false);
+     }
+-
++
+     static inline
+     sp<XMLNode> newCData(const String8& filename) {
+         return new XMLNode(filename);
+     }
+-
++
+     enum type {
+         TYPE_NAMESPACE,
+         TYPE_ELEMENT,
+         TYPE_CDATA
+     };
+-
++
+     type getType() const;
+-
++
+     const String16& getNamespacePrefix() const;
+     const String16& getNamespaceUri() const;
+-
++
+     const String16& getElementNamespace() const;
+     const String16& getElementName() const;
+     const Vector<sp<XMLNode> >& getChildren() const;
+
+     const String8& getFilename() const;
+-
++
+     struct attribute_entry {
+         attribute_entry() : index(~(uint32_t)0), nameResId(0)
+         {
+@@ -82,7 +87,7 @@ public:
+                 || value.dataType == Res_value::TYPE_NULL
+                 || value.dataType == Res_value::TYPE_STRING;
+         }
+-
++
+         String16 ns;
+         String16 name;
+         String16 string;
+@@ -95,7 +100,7 @@ public:
+     const Vector<attribute_entry>& getAttributes() const;
+
+     const attribute_entry* getAttribute(const String16& ns, const String16& name) const;
+-
++
+     attribute_entry* editAttribute(const String16& ns, const String16& name);
+
+     const String16& getCData() const;
+@@ -106,9 +111,9 @@ public:
+     int32_t getEndLineNumber() const;
+
+     sp<XMLNode> searchElement(const String16& tagNamespace, const String16& tagName);
+-
++
+     sp<XMLNode> getChildElement(const String16& tagNamespace, const String16& tagName);
+-
++
+     status_t addChild(const sp<XMLNode>& child);
+
+     status_t insertChildAt(const sp<XMLNode>& child, size_t index);
+@@ -163,25 +168,25 @@ private:
+     endElement(void *userData, const char *name);
+     static void XMLCALL
+     endNamespace(void *userData, const char *prefix);
+-
++
+     static void XMLCALL
+     commentData(void *userData, const char *comment);
+-
++
+     // For cloning
+     XMLNode();
+
+     // Creating an element node.
+     XMLNode(const String8& filename, const String16& s1, const String16& s2, bool isNamespace);
+-
++
+     // Creating a CDATA node.
+     XMLNode(const String8& filename);
+-
++
+     status_t collect_strings(StringPool* dest, Vector<uint32_t>* outResIds,
+             bool stripComments, bool stripRawValues) const;
+
+     status_t collect_attr_strings(StringPool* outPool,
+         Vector<uint32_t>* outResIds, bool allAttrs) const;
+-
++
+     status_t collect_resid_strings(StringPool* outPool,
+             Vector<uint32_t>* outResIds) const;
+
+diff --git a/tools/aapt/acdd/ACDDResourceImpl.cpp b/tools/aapt/acdd/ACDDResourceImpl.cpp
+new file mode 100755
+index 0000000..f1edee7
+--- /dev/null
++++ b/tools/aapt/acdd/ACDDResourceImpl.cpp
+@@ -0,0 +1,38 @@
++
++#include "ACDDResourceImpl.h"
++void acdd_parseResourceTable(){
++        std::string sharedResourceSymbol=ACDDAaptConfig::getInstance()->getSharedResourcePath();
++        if(access(sharedResourceSymbol.c_str(),F_OK)==-1) {
++                fprintf(stderr, "PreDefine  Resource  Symbol file not access   ,process abort!!! \n");
++                exit(-0x01010000);
++        }else{
++                fprintf(stderr, "PreDefine  Resource  Symbol  found \n");
++                sp<XMLNode> root = XMLNode::parse(sharedResourceSymbol.c_str());
++
++                Vector<sp<XMLNode> >mChildrenNodes= root->getChildren();
++                for (size_t i=0; i<mChildrenNodes.size(); i++) {
++                        sp<XMLNode> mCurrntNode=  mChildrenNodes.itemAt(i);
++
++                        Vector<XMLNode::attribute_entry> mAttributes=mCurrntNode->getAttributes();
++                        std::string type;
++                        std::string name;
++                        int value=0;
++                        for (size_t i=0; i<mAttributes.size(); i++) {
++                                const XMLNode::attribute_entry& ae(mAttributes.itemAt(i));
++
++                                if(!ae.name.compare(android::String16("type"))) {
++                                        type=  String8(ae.string).string();
++                                }else if (!ae.name.compare(android::String16("name"))) {
++                                        name=  String8(ae.string).string();
++                                }else if(!ae.name.compare(android::String16("id"))) {
++                                        value=   strtol(String8(ae.string).string(),NULL,16);
++                                }
++                        }
++                        ACDDResourceBridge::getInstance()->addResourceSymbol(type,name,value);
++
++
++                }
++
++        }
++
++}
+diff --git a/tools/aapt/acdd/ACDDResourceImpl.h b/tools/aapt/acdd/ACDDResourceImpl.h
+new file mode 100755
+index 0000000..9e3e417
+--- /dev/null
++++ b/tools/aapt/acdd/ACDDResourceImpl.h
+@@ -0,0 +1,24 @@
++#ifndef __RESIURCES_HACK_H__
++#define __RESIURCES_HACK_H__
++
++#include "AaptAssets.h"
++#include "AaptUtil.h"
++#include "AaptXml.h"
++#include "CacheUpdater.h"
++#include "CrunchCache.h"
++#include "FileFinder.h"
++#include "Images.h"
++#include "IndentPrinter.h"
++#include "Main.h"
++#include "ResourceTable.h"
++#include "StringPool.h"
++#include "Symbol.h"
++#include "WorkQueue.h"
++
++#include "XMLNode.h"
++#include "Main.h"
++#include <androidfw/acdd/ACDDAaptConfig.h>
++#include <algorithm>
++#include <fcntl.h>
++void acdd_parseResourceTable();
++#endif
+--
+2.6.4
