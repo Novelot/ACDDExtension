@@ -6,7 +6,7 @@ ACDDExtension,is extension project of ACDD ,a Android Component Plugin Framework
 
 
 ### Contributors
-[achellies](https://github.com/achellies)<br>
+[light4mare](https://github.com/light4mare)<br>
 [BunnyBlue](https://github.com/bunnyblue)<br>
 
 
