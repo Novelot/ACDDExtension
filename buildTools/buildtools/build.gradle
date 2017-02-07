@@ -1,0 +1,131 @@
+apply plugin: 'groovy'
+apply plugin: 'maven'
+//apply plugin: 'com.github.dcendents.android-maven'
+apply plugin: 'com.jfrog.bintray'
+java.util.Properties properties = new java.util.Properties()
+if(file(project.rootDir.getAbsolutePath()+File.separator+'local.properties').exists()){
+    properties.load(project.rootProject.file('local.properties').newDataInputStream())
+}else{
+
+    println "local.properties not found ,disable deploy"
+}
+dependencies {
+    compile gradleApi()
+    compile localGroovy()
+    compile 'com.android.tools.build:gradle:2.2.2'
+    compile 'org.ow2.asm:asm:6.0_ALPHA'
+    compile 'org.json:json:20160810'
+}
+
+ext {
+    bintrayRepo = 'ACDD'
+    bintrayName = 'buildtools'
+
+    publishedGroupId = 'org.acdd'
+    libraryName = 'buildtools'
+    artifact = 'buildtools'
+
+    libraryDescription = 'ACDD Bundle Plugin'
+
+    siteUrl = 'https://github.com/bunnyblue/ACDD'
+    gitUrl = 'https://github.com/bunnyblue/ACDD.git'
+
+    libraryVersion = properties.getProperty("buildtoolVersion")
+
+    developerId = 'bunnyblue'
+    developerName = 'Bunny Blue'
+    developerEmail = 'bunnyblueair@gmail.com'
+
+    licenseName = 'The MIT License (MIT)'
+    licenseUrl = 'https://raw.githubusercontent.com/bunnyblue/ACDD/master/LICENSE'
+    allLicenses = ["MIT"]
+}
+
+group = ext.publishedGroupId
+install {
+    repositories.mavenInstaller {
+        // This generates POM.xml with proper parameters
+        pom {
+            project {
+                packaging 'jar'
+                groupId publishedGroupId
+                artifactId artifact
+
+                // Add your description here
+                name libraryName
+                description libraryDescription
+                url siteUrl
+
+                // Set your license
+                licenses {
+                    license {
+                        name licenseName
+                        url licenseUrl
+                    }
+                }
+                developers {
+                    developer {
+                        id developerId
+                        name developerName
+                        email developerEmail
+                    }
+                    developer {
+                        id "light4mare"
+                        name "light4mare"
+                    }
+                }
+                scm {
+                    connection gitUrl
+                    developerConnection gitUrl
+                    url siteUrl
+
+                }
+            }
+        }
+    }
+}
+
+
+
+version = ext.libraryVersion
+
+task sourcesJar(type: Jar) {
+    from sourceSets.main.allJava
+    classifier = 'sources'
+}
+
+
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+artifacts {
+    // archives javadocJar
+    archives sourcesJar
+}
+
+bintray {
+    user = properties.getProperty("bintray.user")
+    key = properties.getProperty("bintray.apikey")
+
+    configurations = ['archives']
+    pkg {
+        repo = bintrayRepo
+        name = bintrayName
+        desc = libraryDescription
+        websiteUrl = siteUrl
+        vcsUrl = gitUrl
+        licenses = allLicenses
+        publish = true
+        publicDownloadNumbers = true
+        version {
+            desc = libraryDescription
+            gpg {
+                sign = true //Determines whether to GPG sign the files. The default is false
+                passphrase = properties.getProperty("bintray.gpg.password")
+                //Optional. The passphrase for GPG signing'
+            }
+        }
+    }
+}
