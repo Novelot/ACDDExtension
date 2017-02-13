@@ -30,20 +30,8 @@
 buildscript {
     repositories {
         maven {
-            credentials {
-                username 'android'
-                password 'android!@#'
-            }
-            url "http://113.31.139.46:8081/nexus/content/repositories//releases"
-        }
 
-        maven {
-            credentials {
-                username 'android'
-                password 'android!@#'
-            }
-            url "http://113.31.139.46:8081//nexus/content/repositories/snapshots"
-        }
+
         jcenter()
     }
     dependencies {
@@ -56,21 +44,7 @@ buildscript {
 
 allprojects {
     repositories {
-        maven {
-            credentials {
-                username 'android'
-                password 'android!@#'
-            }
-            url "http://113.31.139.46:8081/nexus/content/repositories/releases"
-        }
 
-        maven {
-            credentials {
-                username 'android'
-                password 'android!@#'
-            }
-            url "http://113.31.139.46:8081/nexus/content/repositories/snapshots"
-        }
         jcenter()
     }
 }
