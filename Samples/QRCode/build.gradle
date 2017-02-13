@@ -67,7 +67,7 @@ android {
             aaptOptions.additionalParameters '--ACDD-resoure-id', '0x23', '--ACDD-shared-resources', rootProject.file("public.xml").getAbsolutePath()
         }
         normal {
-            aaptOptions.additionalParameters '--ACDD-resoure-id', '0x7f'
+            //aaptOptions.additionalParameters '--ACDD-resoure-id', '0x7f'，'--ACDD-shared-resources', file("../public.xml").getAbsolutePath()
         }
     }
 }
